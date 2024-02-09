@@ -94,6 +94,58 @@ public class AdjustCase<R extends ConnectRecord<R>> implements Transformation<R>
         }
     }
 
+
+    /**
+     * The set of options how the case of a string can be converted
+     */
+    public enum MessageStyle implements EnumeratedValue {
+
+        /**
+         * Convert debezium style messages
+         */
+        DEBEZIUM("debezium"),
+
+        /**
+         * Convert kafka connect style messages
+         */
+        CONNECT("connect");
+
+
+        private final String value;
+
+        MessageStyle(String value) {
+            this.value = value;
+        }
+
+        @Override
+        public String getValue() {
+            return value;
+        }
+
+        /**
+         * Determine if the supplied value is one of the predefined options.
+         *
+         * @param value the configuration property value; may not be null
+         * @return the matching option, or null if no match is found
+         */
+        public static MessageStyle parse(String value) {
+            if (value == null) {
+                return null;
+            }
+
+            value = value.trim();
+
+            for (MessageStyle option : MessageStyle.values()) {
+                if (option.getValue().equalsIgnoreCase(value)) {
+                    return option;
+                }
+            }
+
+            return null;
+        }
+    }
+
+
     private static final Field TOPIC_ADJUST_CASE = Field.create("topic.name.case.to")
             .withDisplayName("Change case of the topic name")
             .withEnum(AdjustCaseTo.class, AdjustCaseTo.KEEP)
@@ -108,11 +160,19 @@ public class AdjustCase<R extends ConnectRecord<R>> implements Transformation<R>
             .withImportance(ConfigDef.Importance.MEDIUM)
             .withDescription("How the case of the field names should be changed.");
 
+    private static final Field MESSAGE_STYLE = Field.create("message.style")
+            .withDisplayName("Whether the message is in \"debezium\" or in \"connect\" style")
+            .withEnum(MessageStyle.class)
+            .withWidth(ConfigDef.Width.SHORT)
+            .withImportance(ConfigDef.Importance.HIGH)
+            .withDescription("Both messages in \"debezium\" style with an envelope containing before and after fields and plain \"connect\" style messages that directly contain the new values as fields are supported.");
+
     private static final Logger LOGGER = LoggerFactory.getLogger(AdjustCase.class);
 
     private final SchemaNameAdjuster schemaNameAdjuster = SchemaNameAdjuster.create();
     private AdjustCaseTo topicAdjustCaseTo;
     private AdjustCaseTo fieldNameAdjustCaseTo;
+    private MessageStyle messageStyle;
     private final Cache<Schema, Schema> keySchemaUpdateCache = new SynchronizedCache<>(new LRUCache<Schema, Schema>(16));
     private final Cache<Schema, Schema> envelopeSchemaUpdateCache = new SynchronizedCache<>(new LRUCache<Schema, Schema>(16));
     private final Cache<String, String> topicReplaceCache = new SynchronizedCache<>(new LRUCache<String, String>(16));
@@ -130,6 +190,7 @@ public class AdjustCase<R extends ConnectRecord<R>> implements Transformation<R>
 
         topicAdjustCaseTo = AdjustCaseTo.parse(config.getString(TOPIC_ADJUST_CASE));
         fieldNameAdjustCaseTo = AdjustCaseTo.parse(config.getString(FIELD_NAME_ADJUST_CASE));
+        messageStyle = MessageStyle.parse(config.getString(MESSAGE_STYLE));
 
         smtManager = new SmtManager<>(config);
     }
@@ -147,13 +208,17 @@ public class AdjustCase<R extends ConnectRecord<R>> implements Transformation<R>
         // Key could be null in the case of a table without a primary key
         if (record.key() != null) {
             final Struct oldKey = requireStruct(record.key(), "Updating schema");
-            newKeySchema = updateKeySchema(oldKey.schema(), newTopic);
-            newKey = updateKey(newKeySchema, oldKey);
+            LOGGER.trace("Old key schema: {}", oldKey.schema());
+            LOGGER.trace("Old key: {}", oldKey);
+            newKeySchema = updatePlainMessageSchema(oldKey.schema(), newTopic);
+            LOGGER.trace("New key schema: {}", newKeySchema);
+            newKey = updatePlainMessage(newKeySchema, oldKey);
+            LOGGER.trace("New key: {}", newKey);
         }
 
         // In case of tombstones or non-CDC events (heartbeats, schema change events),
         // leave the value as-is
-        if (record.value() == null || !smtManager.isValidEnvelope(record)) {
+        if (record.value() == null || (messageStyle == MessageStyle.DEBEZIUM && !smtManager.isValidEnvelope(record))) {
             // Value will be null in the case of a delete event tombstone
             return record.newRecord(
                     newTopic,
@@ -165,17 +230,32 @@ public class AdjustCase<R extends ConnectRecord<R>> implements Transformation<R>
                     record.timestamp());
         }
 
-        final Struct oldEnvelope = requireStruct(record.value(), "Updating schema");
-        final Schema newEnvelopeSchema = updateEnvelopeSchema(oldEnvelope.schema(), newTopic);
-        final Struct newEnvelope = updateEnvelope(newEnvelopeSchema, oldEnvelope);
+        final Struct oldMessage = requireStruct(record.value(), "Updating schema");
+        LOGGER.trace("Old message schema: {}", oldMessage.schema());
+        LOGGER.trace("Old message: {}", oldMessage);
+        Schema newMessageSchema;
+        Struct newMessage;
+        if (messageStyle == MessageStyle.DEBEZIUM) {
+            newMessageSchema = updateEnvelopeSchema(oldMessage.schema(), newTopic);
+            newMessage = updateEnvelope(newMessageSchema, oldMessage);
+        } else if (messageStyle == MessageStyle.CONNECT) {
+            newMessageSchema = updatePlainMessageSchema(oldMessage.schema(), newTopic);
+            newMessage = updatePlainMessage(newMessageSchema, oldMessage);
+        }
+        else {
+            throw new UnsupportedOperationException(
+                    "Message style: " + messageStyle.getValue() + " is not yet implemented!");
+        }
+        LOGGER.trace("New message schema: {}", newMessageSchema);
+        LOGGER.trace("New message: {}", newMessage);
 
         return record.newRecord(
                 newTopic,
                 record.kafkaPartition(),
                 newKeySchema,
                 newKey,
-                newEnvelopeSchema,
-                newEnvelope,
+                newMessageSchema,
+                newMessage,
                 record.timestamp());
     }
 
@@ -269,11 +349,11 @@ public class AdjustCase<R extends ConnectRecord<R>> implements Transformation<R>
         }
         else {
             throw new UnsupportedOperationException(
-                    "topicProcessor for caseChange: " + caseChange.getValue() + "is not yet implemented!");
+                    "Name processor for caseChange: " + caseChange.getValue() + " is not yet implemented!");
         }
     }
 
-    private Schema updateKeySchema(Schema oldKeySchema, String newTopicName) {
+    private Schema updatePlainMessageSchema(Schema oldKeySchema, String newTopicName) {
         Schema newKeySchema = keySchemaUpdateCache.get(oldKeySchema);
         if (newKeySchema != null) {
             return newKeySchema;
@@ -292,7 +372,7 @@ public class AdjustCase<R extends ConnectRecord<R>> implements Transformation<R>
         return newKeySchema;
     }
 
-    private Struct updateKey(Schema newKeySchema, Struct oldKey) {
+    private Struct updatePlainMessage(Schema newKeySchema, Struct oldKey) {
         final Struct newKey = new Struct(newKeySchema);
         for (org.apache.kafka.connect.data.Field field : oldKey.schema().fields()) {
             String newName = determineNewFieldName(field.name());
@@ -307,6 +387,7 @@ public class AdjustCase<R extends ConnectRecord<R>> implements Transformation<R>
             return newEnvelopeSchema;
         }
 
+        // Build new schema based on the BEFORE field. It will be used for the after field as well.
         final Schema oldValueSchema = oldEnvelopeSchema.field(Envelope.FieldName.BEFORE).schema();
         final SchemaBuilder ValueBuilder = copySchemaExcludingName(oldValueSchema, SchemaBuilder.struct(), false);
         ValueBuilder.name(schemaNameAdjuster.adjust(newTopicName + ".Value"));
@@ -316,6 +397,7 @@ public class AdjustCase<R extends ConnectRecord<R>> implements Transformation<R>
         }
         final Schema newValueSchema = ValueBuilder.build();
 
+        // Apply the new schema to both the before and after field
         final SchemaBuilder envelopeBuilder = copySchemaExcludingName(oldEnvelopeSchema, SchemaBuilder.struct(), false);
         for (org.apache.kafka.connect.data.Field field : oldEnvelopeSchema.fields()) {
             final String fieldName = field.name();
