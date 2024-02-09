@@ -316,7 +316,7 @@ public class AdjustCase<R extends ConnectRecord<R>> implements Transformation<R>
     }
 
     private interface NameProcessor {
-        public String process(String oldTopic);
+        String process(String oldTopic);
     }
 
     private class UpperCaseProcessor implements NameProcessor {
