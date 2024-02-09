@@ -177,6 +177,14 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
             .withGroup(Field.createGroupEntry(Field.Group.CONNECTOR_SNAPSHOT, 11))
             .withDescription("A token to replace on snapshot predicate template");
 
+    public static final Field SNAPSHOT_CAPTURE_DDL = Field.create("snapshot.ddl.capture")
+            .withDisplayName("Enable capture of table DDL")
+            .withType(Type.BOOLEAN)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.HIGH)
+            .withDefault(true)
+            .withDescription("Shows up as 'ddl' in schema change events. Uses dbms_metadata.get_ddl, needs SELECT_CATALOG_ROLE.");
+
     @Deprecated
     public static final Field LOG_MINING_TRANSACTION_RETENTION = Field.create("log.mining.transaction.retention.hours")
             .withDisplayName("Log Mining long running transaction retention")
@@ -623,6 +631,7 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
                     QUERY_FETCH_SIZE,
                     SNAPSHOT_ENHANCEMENT_TOKEN,
                     SNAPSHOT_LOCKING_MODE,
+                    SNAPSHOT_CAPTURE_DDL,
                     RAC_NODES,
                     INTERVAL_HANDLING_MODE,
                     LOG_MINING_ARCHIVE_LOG_HOURS,
@@ -697,6 +706,7 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
     private final StreamingAdapter streamingAdapter;
     private final String snapshotEnhancementToken;
     private final SnapshotLockingMode snapshotLockingMode;
+    private final Boolean snapshotDdlCapture;
     private final int queryFetchSize;
 
     // LogMiner options
@@ -764,6 +774,7 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
         if (this.streamingAdapter == null) {
             throw new DebeziumException("Unable to instantiate the connector adapter implementation");
         }
+        this.snapshotDdlCapture = config.getBoolean(SNAPSHOT_CAPTURE_DDL);
 
         this.queryFetchSize = config.getInteger(QUERY_FETCH_SIZE);
 
@@ -1558,6 +1569,13 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
      */
     public String getTokenToReplaceInSnapshotPredicate() {
         return snapshotEnhancementToken;
+    }
+
+    /**
+     * @return whether DDL should be captured
+     */
+    public Boolean getSnapshotDdlCapture() {
+        return snapshotDdlCapture;
     }
 
     /**
