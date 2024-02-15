@@ -42,7 +42,6 @@ public abstract class PreambleSingleColumnReconstructedSelectParser {
     public LogMinerDmlEntry parse(String sql, Table table) {
         // Reset internal state
         reset(table);
-
         if (!Strings.isNullOrBlank(sql)) {
             try {
                 int startIndex = sql.indexOf(preamble);
@@ -151,6 +150,12 @@ public abstract class PreambleSingleColumnReconstructedSelectParser {
     }
 
     protected int parseWhereClause(String sql, int index, Table table) {
+        // A hack to fix DBZ-7490 
+        // ensures that the sql string ends with a whitespace
+        if (!sql.endsWith(" ")) {
+                sql = sql + " ";
+            }
+
         for (int i = index; i < sql.length(); ++i) {
             // parse column name
             StringBuilder columnName = new StringBuilder();
