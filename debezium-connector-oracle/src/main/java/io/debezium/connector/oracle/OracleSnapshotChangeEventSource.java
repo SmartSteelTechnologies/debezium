@@ -231,12 +231,17 @@ public class OracleSnapshotChangeEventSource extends RelationalSnapshotChangeEve
     protected SchemaChangeEvent getCreateTableEvent(RelationalSnapshotContext<OraclePartition, OracleOffsetContext> snapshotContext,
                                                     Table table)
             throws SQLException {
+        String ddl = null;
+        if (connectorConfig.getSnapshotDdlCapture()) {
+            ddl = jdbcConnection.getTableMetadataDdl(table.id());
+        }
+
         return SchemaChangeEvent.ofCreate(
                 snapshotContext.partition,
                 snapshotContext.offset,
                 snapshotContext.catalogName,
                 table.id().schema(),
-                jdbcConnection.getTableMetadataDdl(table.id()),
+                ddl,
                 table,
                 true);
     }

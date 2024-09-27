@@ -42,7 +42,6 @@ public abstract class PreambleSingleColumnReconstructedSelectParser {
     public LogMinerDmlEntry parse(String sql, Table table) {
         // Reset internal state
         reset(table);
-
         if (!Strings.isNullOrBlank(sql)) {
             try {
                 int startIndex = sql.indexOf(preamble);
@@ -255,8 +254,17 @@ public abstract class PreambleSingleColumnReconstructedSelectParser {
             }
         }
 
-        if (start != -1 && last != -1) {
-            final String value = sql.substring(start, last);
+        if (start != -1) {
+            final String value;
+            if (last != -1) {
+                // Index was already set above
+                value = sql.substring(start, last);
+            }
+            else {
+                // Index hasn't been set since we reached end of the SQL
+                value = sql.substring(start);
+                index = sql.length();
+            }
             if (!value.equalsIgnoreCase("null")) {
                 columnValues[columnIndex] = value;
             }

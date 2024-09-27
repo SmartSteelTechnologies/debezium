@@ -177,6 +177,14 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
             .withGroup(Field.createGroupEntry(Field.Group.CONNECTOR_SNAPSHOT, 11))
             .withDescription("A token to replace on snapshot predicate template");
 
+    public static final Field SNAPSHOT_CAPTURE_DDL = Field.create("snapshot.ddl.capture")
+            .withDisplayName("Enable capture of table DDL")
+            .withType(Type.BOOLEAN)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.HIGH)
+            .withDefault(true)
+            .withDescription("Shows up as 'ddl' in schema change events. Uses dbms_metadata.get_ddl, needs SELECT_CATALOG_ROLE.");
+
     @Deprecated
     public static final Field LOG_MINING_TRANSACTION_RETENTION = Field.create("log.mining.transaction.retention.hours")
             .withDisplayName("Log Mining long running transaction retention")
@@ -592,6 +600,14 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
             .withDescription("A comma-separated list of usernames that schema changes will be skipped for. Defaults to 'SYS,SYSTEM'.")
             .withDefault("SYS,SYSTEM");
 
+    public static final Field LOG_MINING_CAPTURE_MEMORY_STATISTICS = Field.create("log.mining.capture.memory.statistics")
+            .withDisplayName("Enable capture of memory statistics from the source database.")
+            .withType(Type.BOOLEAN)
+            .withWidth(Width.SHORT)
+            .withImportance(Importance.LOW)
+            .withDefault(true)
+            .withDescription("Will show up as *GlobalAreaMemoryInBytes metrics in monitoring. Will require access to v$statname and v$mystat.");
+
     private static final ConfigDefinition CONFIG_DEFINITION = HistorizedRelationalDatabaseConnectorConfig.CONFIG_DEFINITION.edit()
             .name("Oracle")
             .excluding(
@@ -615,6 +631,7 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
                     QUERY_FETCH_SIZE,
                     SNAPSHOT_ENHANCEMENT_TOKEN,
                     SNAPSHOT_LOCKING_MODE,
+                    SNAPSHOT_CAPTURE_DDL,
                     RAC_NODES,
                     INTERVAL_HANDLING_MODE,
                     LOG_MINING_ARCHIVE_LOG_HOURS,
@@ -643,6 +660,7 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
                     LOG_MINING_ARCHIVE_LOG_ONLY_SCN_POLL_INTERVAL_MS,
                     LOG_MINING_SCN_GAP_DETECTION_GAP_SIZE_MIN,
                     LOG_MINING_SCN_GAP_DETECTION_TIME_INTERVAL_MAX_MS,
+                    LOG_MINING_CAPTURE_MEMORY_STATISTICS,
                     UNAVAILABLE_VALUE_PLACEHOLDER,
                     BINARY_HANDLING_MODE,
                     SCHEMA_NAME_ADJUSTMENT_MODE,
@@ -688,6 +706,7 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
     private final StreamingAdapter streamingAdapter;
     private final String snapshotEnhancementToken;
     private final SnapshotLockingMode snapshotLockingMode;
+    private final Boolean snapshotDdlCapture;
     private final int queryFetchSize;
 
     // LogMiner options
@@ -715,6 +734,7 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
     private final int logMiningScnGapDetectionGapSizeMin;
     private final int logMiningScnGapDetectionTimeIntervalMaxMs;
     private final int logMiningLogFileQueryMaxRetries;
+    private final Boolean logMiningCaptureMemoryStatistics;
     private final Duration logMiningInitialDelay;
     private final Duration logMiningMaxDelay;
     private final Duration logMiningMaximumSession;
@@ -754,6 +774,7 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
         if (this.streamingAdapter == null) {
             throw new DebeziumException("Unable to instantiate the connector adapter implementation");
         }
+        this.snapshotDdlCapture = config.getBoolean(SNAPSHOT_CAPTURE_DDL);
 
         this.queryFetchSize = config.getInteger(QUERY_FETCH_SIZE);
 
@@ -781,6 +802,7 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
         this.logMiningScnGapDetectionGapSizeMin = config.getInteger(LOG_MINING_SCN_GAP_DETECTION_GAP_SIZE_MIN);
         this.logMiningScnGapDetectionTimeIntervalMaxMs = config.getInteger(LOG_MINING_SCN_GAP_DETECTION_TIME_INTERVAL_MAX_MS);
         this.logMiningLogFileQueryMaxRetries = config.getInteger(LOG_MINING_LOG_QUERY_MAX_RETRIES);
+        this.logMiningCaptureMemoryStatistics = config.getBoolean(LOG_MINING_CAPTURE_MEMORY_STATISTICS);
         this.logMiningInitialDelay = Duration.ofMillis(config.getLong(LOG_MINING_LOG_BACKOFF_INITIAL_DELAY_MS));
         this.logMiningMaxDelay = Duration.ofMillis(config.getLong(LOG_MINING_LOG_BACKOFF_MAX_DELAY_MS));
         this.logMiningMaximumSession = Duration.ofMillis(config.getLong(LOG_MINING_SESSION_MAX_MS));
@@ -1550,6 +1572,13 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
     }
 
     /**
+     * @return whether DDL should be captured
+     */
+    public Boolean getSnapshotDdlCapture() {
+        return snapshotDdlCapture;
+    }
+
+    /**
      * @return whether continuous log mining is enabled
      */
     public boolean isContinuousMining() {
@@ -1703,6 +1732,14 @@ public class OracleConnectorConfig extends HistorizedRelationalDatabaseConnector
      */
     public int getLogMiningBatchSizeDefault() {
         return logMiningBatchSizeDefault;
+    }
+
+    /**
+     *
+     * @return boolean Whether memory statistics should be captured while log mining
+     */
+    public boolean getLogMiningCaptureMemoryStatistics() {
+        return logMiningCaptureMemoryStatistics;
     }
 
     /**
